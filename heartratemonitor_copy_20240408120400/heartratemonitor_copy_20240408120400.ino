@@ -34,37 +34,49 @@ void loop() {
   computeFrequency();
   displayWaveform();
 }
+
+const unsigned long measureInterval = 1000000; // Measuring interval in microseconds (e.g., 1 second)
+const unsigned long debounceTime = 200000; // Minimum time between peaks (200ms)
+static unsigned long lastMeasurementStartTime = 0;
+static unsigned long lastPeakTime = 0;
+static int highestValue = 0;
+static unsigned long highestValueTime = 0;
+
 void computeFrequency() {
-  static unsigned long lastHeartbeatTime = 0; // Time of the last detected heartbeat
-  static float adaptiveThreshold = 512; // Initial threshold, will adapt based on signal
-  static const unsigned long debounceTime = 200000; // Minimum time between heartbeats (200ms)
-  const float thresholdAdjustmentFactor = 0.1; // Determines how quickly the threshold adapts (tweak based on testing)
-  
+  static enum { FINDING_FIRST_PEAK, FINDING_SECOND_PEAK } state = FINDING_FIRST_PEAK;
   int signalReading = analogRead(signalPin); // Current signal reading
   unsigned long currentTime = micros(); // Current time in microseconds
 
-  // Update the adaptive threshold based on the moving average of peak amplitudes
-  if (signalReading > adaptiveThreshold && currentTime - lastHeartbeatTime > debounceTime) {
-    // Detected a peak, calculate BPM
-    float period = (currentTime - lastHeartbeatTime) * 0.000001f; // Time since last peak in seconds
-    lastHeartbeatTime = currentTime; // Update time of last peak
-
-    if (period > 0) { // Avoid division by zero
-      int bpm = 60 / period; // Calculate BPM
-      if (bpm > 30 && bpm < 180) { // Filter unrealistic BPM values
-        Serial.print("BPM: ");
-        Serial.println(bpm);
-        displayBPM(bpm);
-        displaySpO2(bpm); // Assuming SpO2 calculation is related
-        displayHeartRateInfo(bpm);
+  // Start of a new measurement interval
+  if (currentTime - lastMeasurementStartTime >= measureInterval) {
+    if (state == FINDING_FIRST_PEAK) {
+      lastPeakTime = highestValueTime; // Store the time of the first peak
+      state = FINDING_SECOND_PEAK; // Change state to find the second peak
+    } else if (state == FINDING_SECOND_PEAK) {
+      unsigned long period = highestValueTime - lastPeakTime; // Compute the period in microseconds
+      if (period > 0) {
+        float seconds = period * 1e-6; // Convert period to seconds
+        int bpm = static_cast<int>(60.0 / seconds); // Calculate BPM
+        if (bpm > 30 && bpm < 180) { // Filter unrealistic BPM values
+          Serial.print("BPM: ");
+          Serial.println(bpm);
+          displayBPM(bpm);
+          displaySpO2(bpm); // Assuming SpO2 calculation is related
+          displayHeartRateInfo(bpm);
+        }
       }
+      state = FINDING_FIRST_PEAK; // Reset state to find the next first peak
     }
+    // Reset for next interval
+    lastMeasurementStartTime = currentTime;
+    highestValue = 0;
+    highestValueTime = 0;
+  }
 
-    // Update the adaptive threshold
-    adaptiveThreshold += (signalReading - adaptiveThreshold) * thresholdAdjustmentFactor;
-  } else if (signalReading < adaptiveThreshold) {
-    // Gradually lower the threshold when the signal is below it, to adapt to decreasing signal amplitude
-    adaptiveThreshold -= thresholdAdjustmentFactor * (adaptiveThreshold - signalReading) / 2;
+  // Find the highest value in the current interval
+  if (signalReading > highestValue) {
+    highestValue = signalReading;
+    highestValueTime = currentTime;
   }
 }
 //Displays the BPM at the top of the screen
